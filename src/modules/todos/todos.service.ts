@@ -5,6 +5,7 @@ import {
   GetTodosQueryDto,
   SortOrder,
   TodoSortBy,
+  TodoStatus,
 } from './dto/todos.dto';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -38,6 +39,7 @@ export class TodosService {
   async getTodos(query: GetTodosQueryDto, userId: string) {
     const {
       priority,
+      status = TodoStatus.ALL,
       page = 1,
       limit = 10,
       search,
@@ -48,6 +50,9 @@ export class TodosService {
     const where = {
       userId,
       ...(priority && { priority }),
+      ...(status !== TodoStatus.ALL && {
+        completed: status === TodoStatus.COMPLETED,
+      }),
       ...(search && {
         title: { contains: search, mode: 'insensitive' as const },
       }),

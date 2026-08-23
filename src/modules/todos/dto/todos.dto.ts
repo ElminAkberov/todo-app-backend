@@ -42,6 +42,12 @@ export enum TodoSortBy {
   PRIORITY = 'priority',
 }
 
+export enum TodoStatus {
+  ALL = 'all',
+  ACTIVE = 'active',
+  COMPLETED = 'completed',
+}
+
 export enum SortOrder {
   ASC = 'asc',
   DESC = 'desc',
@@ -51,6 +57,10 @@ export class GetTodosQueryDto {
   @IsOptional()
   @IsEnum(TodoPriority)
   priority?: TodoPriority;
+
+  @IsOptional()
+  @IsEnum(TodoStatus)
+  status?: TodoStatus = TodoStatus.ALL;
 
   @IsOptional()
   @Type(() => Number)
