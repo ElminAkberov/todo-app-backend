@@ -1,0 +1,634 @@
+openapi: 3.0.3
+info:
+  title: Todo App API
+  description: |
+    REST API for the Todo application.
+    Modules: **Auth** (registration / login / token refresh) and **Todos** (tasks).
+
+    Protected endpoints require an `Authorization: Bearer <accessToken>` header.
+
+    The refresh token is **not** returned in the response body. It is set as an
+    `httpOnly` cookie named `refreshToken`, scoped to the `/auth` path, and is
+    read back from that cookie by `POST /auth/refresh`.
+
+    Every todo is scoped to the authenticated user: a todo owned by someone else
+    responds `404 Not Found` rather than `403`, so that existence is not leaked.
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: ekberovelmin04@gmail.com
+  license:
+    name: UNLICENSED
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+
+tags:
+  - name: Auth
+    description: Authentication and token operations
+  - name: Todos
+    description: CRUD operations for tasks
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ----------------------------- AUTH -----------------------------
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserDto'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: User created successfully
+                  data: { $ref: '#/components/schemas/User' }
+                required: [message, data]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: A user with this email already exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example:
+                statusCode: 409
+                message: User already exists
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in
+      description: |
+        Returns the access token in the body and sets the refresh token as an
+        `httpOnly` cookie (`refreshToken`, `Path=/auth`, 30 days).
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginUserDto'
+      responses:
+        '200':
+          description: Login successful
+          headers:
+            Set-Cookie:
+              description: The `httpOnly` refresh-token cookie
+              schema:
+                type: string
+                example: refreshToken=eyJhbGciOi...; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=2592000
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: User logged in successfully
+                  data:
+                    type: object
+                    properties:
+                      accessToken:
+                        type: string
+                        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                      user: { $ref: '#/components/schemas/User' }
+                    required: [accessToken, user]
+                required: [message, data]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: Email or password are incorrect
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example:
+                statusCode: 401
+                message: Email or password are incorrect
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Issue a new access token
+      description: |
+        Reads the refresh token from the `refreshToken` cookie. No request body.
+        Send this request with credentials enabled so the browser attaches the cookie.
+      operationId: refreshToken
+      security: []
+      responses:
+        '200':
+          description: A new access token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                required: [accessToken]
+        '401':
+          description: The refresh token is missing, invalid or expired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                missing:
+                  value:
+                    statusCode: 401
+                    message: Refresh token not found
+                    error: Unauthorized
+                invalid:
+                  value:
+                    statusCode: 401
+                    message: Invalid Refresh token
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Log out
+      description: Clears the refresh-token cookie. Does not require an access token.
+      operationId: logout
+      security: []
+      responses:
+        '200':
+          description: Logged out
+          headers:
+            Set-Cookie:
+              description: The cleared cookie
+              schema:
+                type: string
+                example: refreshToken=; Path=/auth; HttpOnly; Max-Age=0
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: User logged out successfully
+                required: [message]
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get the current user's profile
+      operationId: getProfile
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+                required: [data]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: The user in the token no longer exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example:
+                statusCode: 404
+                message: User not found
+
+  # ----------------------------- TODOS -----------------------------
+  /todos:
+    get:
+      tags: [Todos]
+      summary: List the current user's todos
+      description: Returns only todos belonging to the authenticated user.
+      operationId: findAllTodos
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: priority
+          in: query
+          description: Filter by priority
+          schema: { $ref: '#/components/schemas/TodoPriority' }
+        - name: search
+          in: query
+          description: Case-insensitive substring match on the title
+          schema: { type: string }
+          example: swagger
+        - name: sortBy
+          in: query
+          description: Field to sort by
+          schema:
+            type: string
+            enum: [createdAt, updatedAt, title, priority]
+            default: createdAt
+        - name: sortOrder
+          in: query
+          description: Sort direction
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Paginated list of todos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Todos received successfully
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Todo' }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+                required: [message, data, meta]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Todos]
+      summary: Create a new todo
+      operationId: createTodo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTodoDto' }
+      responses:
+        '201':
+          description: Todo created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Todo created successfully
+                  data: { $ref: '#/components/schemas/Todo' }
+                required: [message, data]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: This user already has a todo with the same title
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example:
+                statusCode: 409
+                message: Todo already exists
+
+  /todos/delete/completed:
+    delete:
+      tags: [Todos]
+      summary: Delete all completed todos
+      description: |
+        Bulk-deletes every completed todo belonging to the authenticated user.
+        Always succeeds, returning a count of `0` when nothing matched.
+
+        Declared before `/todos/{id}` so that the literal `delete` segment is not
+        captured as an `id`.
+      operationId: removeCompletedTodos
+      responses:
+        '200':
+          description: Completed todos deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                description: |
+                  The service already wraps its result, and the controller wraps it
+                  again, so `message` appears at both levels.
+                properties:
+                  message:
+                    type: string
+                    example: All completed todos deleted successfully
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: All completed todos deleted successfully
+                      data:
+                        type: object
+                        properties:
+                          count:
+                            type: integer
+                            description: Number of deleted todos
+                            example: 3
+                        required: [count]
+                    required: [message, data]
+                required: [message, data]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /todos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Todos]
+      summary: Get a todo by ID
+      operationId: findOneTodo
+      responses:
+        '200':
+          description: Todo found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Todos received successfully
+                  data: { $ref: '#/components/schemas/Todo' }
+                required: [message, data]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/TodoNotFound' }
+    patch:
+      tags: [Todos]
+      summary: Update a todo
+      description: At least one of `title` or `priority` must be supplied.
+      operationId: updateTodo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangeTodoDto' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Todo changed successfully
+                  data: { $ref: '#/components/schemas/Todo' }
+                required: [message, data]
+        '400':
+          description: Validation error, or no updatable field was provided
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example:
+                statusCode: 400
+                message: No fields to update
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/TodoNotFound' }
+
+  /todos/{id}/toggle:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    patch:
+      tags: [Todos]
+      summary: Toggle the completion status
+      operationId: toggleTodo
+      responses:
+        '200':
+          description: Status toggled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Todo status changed successfully
+                  data: { $ref: '#/components/schemas/Todo' }
+                required: [message, data]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/TodoNotFound' }
+
+  /todos/{id}/delete:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    delete:
+      tags: [Todos]
+      summary: Delete a todo
+      description: |
+        Note the non-standard `/delete` suffix - `DELETE /todos/{id}` is not routed
+        and responds `404`.
+      operationId: removeTodo
+      responses:
+        '200':
+          description: Deleted; the deleted record is returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Todo deleted successfully
+                  data: { $ref: '#/components/schemas/Todo' }
+                required: [message, data]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/TodoNotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdParam:
+      name: id
+      in: path
+      required: true
+      description: UUID identifier of the todo
+      schema:
+        type: string
+        format: uuid
+      example: 3f7c1a2e-9b4d-4a1e-8c55-1f2b3c4d5e6f
+    Page:
+      name: page
+      in: query
+      description: Page number
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    Limit:
+      name: limit
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 10
+
+  responses:
+    BadRequest:
+      description: Invalid request / validation error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example:
+            statusCode: 400
+            message: ['email must be an email']
+            error: Bad Request
+    Unauthorized:
+      description: The access token is missing or invalid
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            missing:
+              value:
+                statusCode: 401
+                message: Access token not found
+                error: Unauthorized
+            invalid:
+              value:
+                statusCode: 401
+                message: Invalid access token
+                error: Unauthorized
+    TodoNotFound:
+      description: |
+        No such todo for this user. Also returned when the todo exists but is
+        owned by another user.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example:
+            statusCode: 404
+            message: Todo not found
+
+  schemas:
+    TodoPriority:
+      type: string
+      description: Task priority
+      enum: [HIGH, MEDIUM, LOW]
+      default: MEDIUM
+
+    User:
+      type: object
+      description: The password is never included in a response.
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 3f7c1a2e-9b4d-4a1e-8c55-1f2b3c4d5e6f
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        createdAt: { type: string, format: date-time }
+      required: [id, email, createdAt]
+
+    Todo:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title:
+          type: string
+          example: Write the Swagger documentation
+        completed:
+          type: boolean
+          default: false
+        priority: { $ref: '#/components/schemas/TodoPriority' }
+        userId:
+          type: string
+          format: uuid
+          description: ID of the user who owns this todo
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required: [id, title, completed, priority, userId, createdAt, updatedAt]
+
+    CreateUserDto:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        password:
+          type: string
+          format: password
+          minLength: 6
+          example: Passw0rd!
+
+    LoginUserDto:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        password:
+          type: string
+          format: password
+          example: Passw0rd!
+
+    CreateTodoDto:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          example: Write the Swagger documentation
+        priority: { $ref: '#/components/schemas/TodoPriority' }
+        completed:
+          type: boolean
+          default: false
+
+    ChangeTodoDto:
+      type: object
+      description: At least one field must be provided.
+      minProperties: 1
+      properties:
+        title:
+          type: string
+          example: Updated title
+        priority: { $ref: '#/components/schemas/TodoPriority' }
+
+    PaginationMeta:
+      type: object
+      properties:
+        total: { type: integer, example: 42 }
+        page: { type: integer, example: 1 }
+        limit: { type: integer, example: 10 }
+        totalPages: { type: integer, example: 5 }
+      required: [total, page, limit, totalPages]
+
+    ErrorResponse:
+      type: object
+      description: |
+        Shape produced by Nest exception handling. The `error` field is present
+        on exceptions thrown with a built-in status name, and absent on the
+        two-argument HttpException form used across the services.
+      properties:
+        statusCode:
+          type: integer
+          example: 400
+        message:
+          description: A single message or a list of validation errors
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+        error:
+          type: string
+          example: Bad Request
+      required: [statusCode, message]
