@@ -21,6 +21,8 @@ info:
     name: UNLICENSED
 
 servers:
+  - url: https://todo-app-backend-app.up.railway.app
+    description: Production (Railway)
   - url: http://localhost:3000
     description: Local development
 
